@@ -1,19 +1,23 @@
 import axios from "axios";
-import { LANGUAGE_VERSIONS } from "./constants";
 
-const API = axios.create({
-  baseURL: "https://emkc.org/api/v2/piston",
-});
+const SERVER = "http://localhost:3001";
+
+const NOT_RUNNABLE = ["html", "css", "markdown", "json", "yaml", "dockerfile"];
 
 export const executeCode = async (language, sourceCode) => {
-  const response = await API.post("/execute", {
-    language: language,
-    version: LANGUAGE_VERSIONS[language],
-    files: [
-      {
-        content: sourceCode,
+  if (NOT_RUNNABLE.includes(language)) {
+    return {
+      run: {
+        output: `⚠️ Limbajul "${language}" nu poate fi executat direct.`,
+        stderr: "",
       },
-    ],
+    };
+  }
+
+  const response = await axios.post(`${SERVER}/api/execute`, {
+    language,
+    code: sourceCode,
   });
+
   return response.data;
 };
