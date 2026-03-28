@@ -1,37 +1,34 @@
 import { useState } from "react";
-import { Box, Button, Text, HStack, useToast } from "@chakra-ui/react";
+import { Box, Text, HStack, useToast } from "@chakra-ui/react";
 import { executeCode } from "../api";
-
-const SIZES = [
-  { label: "Mic",   w: "20%",  icon: "◫" },
-  { label: "Mediu", w: "35%",  icon: "◨" },
-  { label: "Mare",  w: "50%",  icon: "◩" },
-];
 
 const Output = ({ editorRef, language }) => {
   const toast = useToast();
   const [output, setOutput]       = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setIsError]     = useState(false);
-  const [sizeIdx, setSizeIdx]     = useState(2); // default mare
   const [collapsed, setCollapsed] = useState(false);
+  const [width, setWidth]         = useState("40%");
+
+  const WIDTHS = ["20%", "30%", "40%"];
+  const LABELS = ["S", "M", "L"];
 
   const runCode = async () => {
-    const sourceCode = editorRef.current.getValue();
+    const sourceCode = editorRef.current?.getValue();
     if (!sourceCode) return;
     setCollapsed(false);
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      const { run: result } = await executeCode(language, sourceCode);
-      setOutput(result.output.split("\n"));
-      result.stderr ? setIsError(true) : setIsError(false);
+      const result = await executeCode(language, sourceCode);
+      const run = result?.run;
+      if (!run) { setOutput(["Eroare: răspuns invalid"]); setIsError(true); return; }
+      const text = run.output || run.stderr || "";
+      setOutput(text.split("\n"));
+      setIsError(!!run.stderr && !run.output);
     } catch (error) {
-      toast({
-        title: "Eroare la rulare",
-        description: error.message || "Unable to run code",
-        status: "error",
-        duration: 6000,
-      });
+      toast({ title: "Eroare la rulare", description: error.message, status: "error", duration: 4000 });
+      setOutput([`Eroare: ${error.message}`]);
+      setIsError(true);
     } finally {
       setIsLoading(false);
     }
@@ -39,87 +36,97 @@ const Output = ({ editorRef, language }) => {
 
   return (
     <Box
-      w={collapsed ? "36px" : SIZES[sizeIdx].w}
-      minW={collapsed ? "36px" : "120px"}
-      maxW={collapsed ? "36px" : "50%"}   // ← nu depășește jumătate din ecran
+      w={collapsed ? "28px" : width}
+      minW={collapsed ? "28px" : "160px"}
+      maxW={collapsed ? "28px" : "50%"}
       flexShrink={0}
-      transition="width 0.2s ease, min-width 0.2s ease"
+      bg="#1e1e1e"
+      borderLeft="1px solid #1e1e1e"
+      transition="width 0.15s ease"
       overflow="hidden"
+      fontFamily="system-ui, -apple-system, sans-serif"
+      display="flex"
+      flexDirection="column"
     >
-      {/* Header */}
-      <HStack justify="space-between" mb={2} align="center" h="28px">
+      {/* Panel header */}
+      <Box
+        h="35px"
+        bg="#252526"
+        borderBottom="1px solid #1e1e1e"
+        display="flex"
+        alignItems="center"
+        px={2}
+        justifyContent="space-between"
+        flexShrink={0}
+      >
         {!collapsed && (
-          <Text fontSize="sm" fontWeight="600" color="gray.300" flexShrink={0}>
+          <Text fontSize="11px" fontWeight="700" color="#bbb"
+            letterSpacing="0.8px" textTransform="uppercase">
             Output
           </Text>
         )}
-        <HStack spacing={1} ml="auto">
-          {!collapsed && SIZES.map((s, i) => (
+        <HStack spacing={1} ml={collapsed ? 0 : "auto"}>
+          {!collapsed && WIDTHS.map((w, i) => (
             <Box key={i} as="button"
-              w="20px" h="20px" borderRadius="4px"
+              w="18px" h="18px" borderRadius="2px"
               display="flex" alignItems="center" justifyContent="center"
-              fontSize="12px"
-              bg={sizeIdx === i ? "rgba(110,72,255,0.2)" : "rgba(255,255,255,0.04)"}
-              border={`1px solid ${sizeIdx === i ? "rgba(110,72,255,0.4)" : "rgba(255,255,255,0.08)"}`}
-              color={sizeIdx === i ? "rgba(167,139,250,0.9)" : "gray.500"}
-              cursor="pointer"
-              onClick={() => setSizeIdx(i)}
-              _hover={{ bg: "rgba(110,72,255,0.15)", color: "white" }}
-              transition="all 0.15s"
-              title={s.label}
+              fontSize="10px" fontWeight="700"
+              bg={width === w ? "#37373d" : "transparent"}
+              color={width === w ? "#cccccc" : "#6d6d6d"}
+              border="none" cursor="pointer"
+              onClick={() => setWidth(w)}
+              _hover={{ color: "#cccccc", bg: "#37373d" }}
             >
-              {s.icon}
+              {LABELS[i]}
             </Box>
           ))}
-
-          {/* Collapse/expand */}
           <Box as="button"
-            w="20px" h="20px" borderRadius="4px"
+            w="18px" h="18px" borderRadius="2px"
             display="flex" alignItems="center" justifyContent="center"
-            fontSize="10px"
-            bg="rgba(255,255,255,0.04)"
-            border="1px solid rgba(255,255,255,0.08)"
-            color="gray.500"
-            cursor="pointer"
+            fontSize="10px" color="#6d6d6d"
+            bg="transparent" border="none" cursor="pointer"
             onClick={() => setCollapsed(v => !v)}
-            _hover={{ bg: "rgba(255,255,255,0.1)", color: "white" }}
-            transition="all 0.15s"
-            title={collapsed ? "Extinde" : "Ascunde"}
+            _hover={{ color: "#cccccc", bg: "#37373d" }}
+            title={collapsed ? "Deschide" : "Închide"}
           >
-            {collapsed ? "◁" : "▷"}
+            {collapsed ? "«" : "»"}
           </Box>
         </HStack>
-      </HStack>
+      </Box>
 
-      {/* Conținut */}
       {!collapsed && (
         <>
-          <Button
-            variant="outline" colorScheme="green"
-            mb={3} size="sm" w="100%"
-            isLoading={isLoading}
-            onClick={runCode}
-            borderRadius="8px" fontFamily="mono" fontSize="12px"
-          >
-            ▶ Run Code
-          </Button>
-
+          {/* Run button */}
           <Box
-            height="calc(75vh - 72px)"
-            p={3}
+            as="button"
+            onClick={runCode}
+            m={2}
+            px={3} py={1.5}
+            bg={isLoading ? "#37373d" : "#0e639c"}
+            borderRadius="3px"
+            cursor={isLoading ? "default" : "pointer"}
+            _hover={{ bg: isLoading ? "#37373d" : "#1177bb" }}
+            transition="background 0.1s"
+            flexShrink={0}
+          >
+            <Text fontSize="12px" color="white" fontWeight="500">
+              {isLoading ? "Running..." : "Run"}
+            </Text>
+          </Box>
+
+          {/* Output content */}
+          <Box
+            flex={1}
             overflowY="auto"
             overflowX="hidden"
-            color={isError ? "red.400" : "gray.200"}
-            border="1px solid"
-            borderRadius="8px"
-            borderColor={isError ? "red.500" : "rgba(255,255,255,0.1)"}
-            bg="rgba(0,0,0,0.3)"
-            fontFamily="'JetBrains Mono', monospace"
+            px={3} py={2}
+            color={isError ? "#f44747" : "#cccccc"}
+            fontFamily="Consolas, 'Courier New', monospace"
             fontSize="12px"
-            lineHeight="1.7"
+            lineHeight="1.6"
             css={{
               "&::-webkit-scrollbar": { width: "4px" },
-              "&::-webkit-scrollbar-thumb": { background: "rgba(255,255,255,0.1)", borderRadius: "2px" },
+              "&::-webkit-scrollbar-thumb": { background: "#424242", borderRadius: "2px" },
             }}
           >
             {output ? (
@@ -129,31 +136,25 @@ const Output = ({ editorRef, language }) => {
                 </Text>
               ))
             ) : (
-              <Text color="gray.600" fontSize="11px">
-                Click "Run Code" to see the output here
+              <Text color="#6d6d6d" fontSize="12px">
+                Run the code to see output here
               </Text>
             )}
           </Box>
         </>
       )}
 
-      {/* Label vertical când e colapsat */}
       {collapsed && (
         <Box
-          mt={4}
-          cursor="pointer"
-          onClick={() => setCollapsed(false)}
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          gap={2}
+          flex={1} display="flex" alignItems="center" justifyContent="center"
+          cursor="pointer" onClick={() => setCollapsed(false)}
         >
           <Text
-            fontSize="9px" color="gray.600"
-            fontFamily="mono" letterSpacing="1.5px"
-            style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
+            fontSize="10px" color="#6d6d6d"
+            style={{ writingMode: "vertical-rl" }}
+            letterSpacing="1px" textTransform="uppercase"
           >
-            OUTPUT
+            Output
           </Text>
         </Box>
       )}

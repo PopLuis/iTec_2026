@@ -3,16 +3,97 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import { config } from "dotenv";
+import mongoose from "mongoose";
+import { exec } from "child_process";
+import { writeFileSync, unlinkSync, existsSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import authRoutes from "./routes/auth.js";
+import projectRoutes from "./routes/projects.js";
 
 config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ["http://localhost:5173", "http://localhost:3000"],
+  credentials: true,
+}));
 app.use(express.json());
 
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+// ── Conectare MongoDB ─────────────────────────────────────────
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("✅ MongoDB conectat"))
+  .catch(err => console.error("❌ MongoDB eroare:", err.message));
+
+// ── Rute API ──────────────────────────────────────────────────
+app.use("/api/auth", authRoutes);
+app.use("/api/projects", projectRoutes);
+
+// ── Rulare cod local ──────────────────────────────────────────
+app.post("/api/execute", async (req, res) => {
+  const { language, code } = req.body;
+  if (!code?.trim()) {
+    return res.json({ run: { output: "⚠️ Niciun cod de rulat.", stderr: "" } });
+  }
+
+  const tmp = tmpdir();
+  const id  = Date.now();
+  let filePath = null;
+  let cmd      = null;
+
+  if (language === "javascript") {
+    filePath = join(tmp, `code_${id}.js`);
+    cmd = `node "${filePath}"`;
+  } else if (language === "python") {
+    filePath = join(tmp, `code_${id}.py`);
+    cmd = `python "${filePath}"`;
+  } else if (language === "typescript") {
+    filePath = join(tmp, `code_${id}.ts`);
+    cmd = `npx ts-node "${filePath}"`;
+  } else if (language === "java") {
+    filePath = join(tmp, `Main_${id}.java`);
+    cmd = `cd "${tmp}" && javac "Main_${id}.java" && java -cp "${tmp}" Main_${id}`;
+  } else if (language === "cpp") {
+    filePath = join(tmp, `code_${id}.cpp`);
+    const out = join(tmp, `code_${id}.out`);
+    cmd = `g++ "${filePath}" -o "${out}" && "${out}"`;
+  } else if (language === "c") {
+    filePath = join(tmp, `code_${id}.c`);
+    const out = join(tmp, `code_${id}.out`);
+    cmd = `gcc "${filePath}" -o "${out}" && "${out}"`;
+  } else if (language === "bash" || language === "shell") {
+    filePath = join(tmp, `code_${id}.sh`);
+    cmd = `bash "${filePath}"`;
+  } else {
+    return res.json({
+      run: {
+        output: `⚠️ Limbajul "${language}" nu poate fi rulat direct (HTML, CSS, Markdown etc.).`,
+        stderr: "",
+      },
+    });
+  }
+
+  try {
+    writeFileSync(filePath, code, "utf8");
+  } catch (err) {
+    return res.json({ run: { output: `❌ Nu am putut scrie fișierul: ${err.message}`, stderr: err.message } });
+  }
+
+  exec(cmd, { timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    // Curăță fișierele temporare
+    try { if (filePath && existsSync(filePath)) unlinkSync(filePath); } catch (_) {}
+
+    if (err && !stdout && !stderr) {
+      return res.json({ run: { output: `❌ Eroare: ${err.message}`, stderr: err.message } });
+    }
+
+    res.json({
+      run: {
+        output: stdout || stderr || "",
+        stderr: stderr || "",
+      },
+    });
+  });
 });
 
 // ── Ruta AI Copilot cu Groq ───────────────────────────────────
@@ -80,6 +161,11 @@ const USER_COLORS = [
 let colorIndex = 0;
 
 // ── Socket.io ─────────────────────────────────────────────────
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+});
+
 io.on("connection", (socket) => {
   console.log(`[+] Connected: ${socket.id}`);
 
@@ -94,11 +180,7 @@ io.on("connection", (socket) => {
     colorIndex++;
 
     room.users.set(socket.id, {
-      id: socket.id,
-      username,
-      color,
-      cursor: null,
-      currentFile: null,
+      id: socket.id, username, color, cursor: null, currentFile: null,
     });
 
     socket.emit("room_state", {
@@ -116,87 +198,55 @@ io.on("connection", (socket) => {
     console.log(`[>] ${username} joined room ${roomId}`);
   });
 
-  // ── User deschide un fișier ─────────────────────────────
   socket.on("open_file", ({ roomId, fileName }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
-    if (user) {
-      user.currentFile = fileName;
-      socket.data.currentFile = fileName;
-    }
+    if (user) { user.currentFile = fileName; socket.data.currentFile = fileName; }
     socket.to(roomId).emit("user_file_changed", {
-      userId: socket.id,
-      username: user?.username,
-      color: user?.color,
-      fileName,
-      users: Array.from(room.users.values()),
+      userId: socket.id, username: user?.username, color: user?.color,
+      fileName, users: Array.from(room.users.values()),
     });
-
     const fileData = room.files[fileName];
-    if (fileData) {
-      socket.emit("file_content", {
-        fileName,
-        code: fileData.code,
-        language: fileData.language,
-      });
-    }
+    if (fileData) socket.emit("file_content", { fileName, code: fileData.code, language: fileData.language });
   });
 
-  // ── Creare fișier nou — broadcast la toți ───────────────
   socket.on("create_file", ({ roomId, fileName, lang, content }) => {
     const room = getRoom(roomId);
-    // Salvează pe server dacă nu există deja
-    if (!room.files[fileName]) {
-      room.files[fileName] = { code: content, language: lang };
-    }
-    // Anunță toți ceilalți useri din cameră
+    if (!room.files[fileName]) room.files[fileName] = { code: content, language: lang };
     socket.to(roomId).emit("file_created", { fileName, lang, content });
-    console.log(`[+] File created: ${fileName} in room ${roomId}`);
   });
 
-  // ── Ștergere fișier — broadcast la toți ────────────────
   socket.on("delete_file", ({ roomId, fileName }) => {
     const room = getRoom(roomId);
-    if (room.files[fileName]) {
-      delete room.files[fileName];
-    }
+    if (room.files[fileName]) delete room.files[fileName];
     socket.to(roomId).emit("file_deleted", { fileName });
-    console.log(`[-] File deleted: ${fileName} in room ${roomId}`);
   });
 
-  // ── Modificare cod ──────────────────────────────────────
   socket.on("code_change", ({ roomId, fileName, code }) => {
     const room = getRoom(roomId);
     if (!room.files[fileName]) room.files[fileName] = {};
     room.files[fileName].code = code;
-
     room.users.forEach((user, userId) => {
-      if (userId !== socket.id && user.currentFile === fileName) {
+      if (userId !== socket.id && user.currentFile === fileName)
         io.to(userId).emit("code_update", { fileName, code });
-      }
     });
   });
 
-  // ── Schimbare limbaj ────────────────────────────────────
   socket.on("language_change", ({ roomId, fileName, language }) => {
     const room = getRoom(roomId);
     if (!room.files[fileName]) room.files[fileName] = {};
     room.files[fileName].language = language;
-
     room.users.forEach((user, userId) => {
-      if (userId !== socket.id && user.currentFile === fileName) {
+      if (userId !== socket.id && user.currentFile === fileName)
         io.to(userId).emit("language_update", { fileName, language });
-      }
     });
   });
 
-  // ── Chat ────────────────────────────────────────────────
   socket.on("send_message", ({ roomId, message }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
     const msgObj = {
-      id: Date.now(),
-      text: message,
+      id: Date.now(), text: message,
       username: user?.username || "Anonymous",
       color: user?.color || "#fff",
       timestamp: new Date().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" }),
@@ -206,32 +256,24 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("new_message", msgObj);
   });
 
-  // ── Cursor ──────────────────────────────────────────────
   socket.on("cursor_move", ({ roomId, position }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
     if (user) user.cursor = position;
     socket.to(roomId).emit("cursor_update", {
-      userId: socket.id,
-      username: user?.username,
-      color: user?.color,
-      position,
-      fileName: user?.currentFile,
+      userId: socket.id, username: user?.username,
+      color: user?.color, position, fileName: user?.currentFile,
     });
   });
 
-  // ── Typing ──────────────────────────────────────────────
   socket.on("typing", ({ roomId, isTyping }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
     socket.to(roomId).emit("user_typing", {
-      userId: socket.id,
-      username: user?.username,
-      isTyping,
+      userId: socket.id, username: user?.username, isTyping,
     });
   });
 
-  // ── Disconnect ──────────────────────────────────────────
   socket.on("disconnect", () => {
     const { roomId, username } = socket.data;
     if (!roomId) return;
@@ -239,8 +281,7 @@ io.on("connection", (socket) => {
     if (room) {
       room.users.delete(socket.id);
       io.to(roomId).emit("user_left", {
-        userId: socket.id,
-        username,
+        userId: socket.id, username,
         users: Array.from(room.users.values()),
       });
       if (room.users.size === 0) {
@@ -257,5 +298,7 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server pornit pe portul ${PORT}`);
   console.log(`🤖 AI Chat: http://localhost:${PORT}/api/ai-chat`);
-  console.log(`🔑 API Key: ${process.env.GROQ_API_KEY ? "✓ setat" : "✗ lipsește"}`);
+  console.log(`⚙️  Execute: http://localhost:${PORT}/api/execute`);
+  console.log(`🔑 Groq Key: ${process.env.GROQ_API_KEY ? "✓" : "✗"}`);
+  console.log(`🗄️  MongoDB: ${process.env.MONGODB_URI ? "✓" : "✗"}`);
 });
