@@ -2,9 +2,13 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import { config } from "dotenv";
+
+config();
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -14,8 +18,51 @@ const io = new Server(httpServer, {
   },
 });
 
-// State
-const rooms = {}; // roomId -> { code, language, users: Map<socketId, user> }
+// ── Ruta AI Copilot cu Groq (gratuit) ────────────────────────
+app.post("/api/ai-chat", async (req, res) => {
+  const { messages, editorCode } = req.body;
+  const apiKey = process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
+    return res.json({ text: "❌ Lipsește GROQ_API_KEY din server/.env" });
+  }
+
+  try {
+    const systemPrompt = `Ești un asistent AI pentru programatori integrat într-un editor colaborativ iTec 2026.
+Răspunzi în română sau engleză după cum scrie utilizatorul.
+Ești expert în JavaScript, TypeScript, Python, React, Node.js și alte limbaje.
+Când dai cod folosești întotdeauna blocuri \`\`\`limbaj ... \`\`\`.
+Ești concis și direct.
+${editorCode ? `\nCodul curent din editor:\n\`\`\`\n${editorCode.slice(0, 2000)}\n\`\`\`` : "\nEditorul este gol."}`;
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        max_tokens: 1024,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages.slice(-10),
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    console.log("Groq status:", data?.error || "OK");
+    const text = data.choices?.[0]?.message?.content || "Nu am putut genera un răspuns.";
+    res.json({ text });
+  } catch (err) {
+    console.error("AI error:", err.message);
+    res.json({ text: `❌ Eroare: ${err.message}` });
+  }
+});
+
+// ── State rooms ───────────────────────────────────────────────
+const rooms = {};
 
 function getRoom(roomId) {
   if (!rooms[roomId]) {
@@ -29,7 +76,6 @@ function getRoom(roomId) {
   return rooms[roomId];
 }
 
-// Assign a color to each user
 const USER_COLORS = [
   "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
   "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
@@ -37,10 +83,10 @@ const USER_COLORS = [
 ];
 let colorIndex = 0;
 
+// ── Socket.io ─────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[+] Connected: ${socket.id}`);
 
-  // Join a room
   socket.on("join_room", ({ roomId, username }) => {
     socket.join(roomId);
     socket.data.roomId = roomId;
@@ -52,7 +98,6 @@ io.on("connection", (socket) => {
 
     room.users.set(socket.id, { id: socket.id, username, color, cursor: null });
 
-    // Send current room state to new user
     socket.emit("room_state", {
       code: room.code,
       language: room.language,
@@ -60,7 +105,6 @@ io.on("connection", (socket) => {
       users: Array.from(room.users.values()),
     });
 
-    // Notify others
     socket.to(roomId).emit("user_joined", {
       user: room.users.get(socket.id),
       users: Array.from(room.users.values()),
@@ -69,21 +113,18 @@ io.on("connection", (socket) => {
     console.log(`[>] ${username} joined room ${roomId}`);
   });
 
-  // Code change - broadcast to others in room
   socket.on("code_change", ({ roomId, code }) => {
     const room = getRoom(roomId);
     room.code = code;
     socket.to(roomId).emit("code_update", { code, senderId: socket.id });
   });
 
-  // Language change
   socket.on("language_change", ({ roomId, language }) => {
     const room = getRoom(roomId);
     room.language = language;
     socket.to(roomId).emit("language_update", { language });
   });
 
-  // Chat message
   socket.on("send_message", ({ roomId, message }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
@@ -95,12 +136,10 @@ io.on("connection", (socket) => {
       timestamp: new Date().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" }),
     };
     room.messages.push(msgObj);
-    if (room.messages.length > 100) room.messages.shift(); // keep last 100
-
+    if (room.messages.length > 100) room.messages.shift();
     io.to(roomId).emit("new_message", msgObj);
   });
 
-  // Cursor position
   socket.on("cursor_move", ({ roomId, position }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
@@ -113,7 +152,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Typing indicator
   socket.on("typing", ({ roomId, isTyping }) => {
     const room = getRoom(roomId);
     const user = room.users.get(socket.id);
@@ -124,7 +162,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Disconnect
   socket.on("disconnect", () => {
     const { roomId, username } = socket.data;
     if (!roomId) return;
@@ -137,7 +174,6 @@ io.on("connection", (socket) => {
         users: Array.from(room.users.values()),
       });
       if (room.users.size === 0) {
-        // Keep room alive for 10 min after last user leaves
         setTimeout(() => {
           if (rooms[roomId]?.users.size === 0) delete rooms[roomId];
         }, 10 * 60 * 1000);
@@ -149,5 +185,7 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
-  console.log(`🚀 WebSocket server running on port ${PORT}`);
+  console.log(`🚀 Server pornit pe portul ${PORT}`);
+  console.log(`🤖 AI Chat: http://localhost:${PORT}/api/ai-chat`);
+  console.log(`🔑 API Key: ${process.env.GROQ_API_KEY ? "✓ setat" : "✗ lipsește — pune GROQ_API_KEY în server/.env"}`);
 });
