@@ -1,0 +1,131 @@
+.container {
+  background: #0d1117;
+  border-left: 1px solid #30363d;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+
+.header {
+  height: 35px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e6edf3;
+  letter-spacing: -0.3px;
+}
+
+.headerControls {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.sizeBtn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6e7681;
+}
+
+.sizeBtn:hover { color: #e6edf3; background: #21262d; }
+.sizeBtnActive { background: #21262d; color: #e6edf3; }
+
+.collapseBtn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #6e7681;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.collapseBtn:hover { color: #e6edf3; background: #21262d; }
+
+.runBtnWrapper {
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.runBtn {
+  width: 100%;
+  padding: 7px;
+  background: #238636;
+  border: 1px solid #2ea043;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: white;
+  font-weight: 500;
+  font-family: system-ui, -apple-system, sans-serif;
+  transition: background 0.15s;
+}
+
+.runBtn:hover { background: #2ea043; }
+.runBtnLoading { background: #21262d; border-color: #30363d; cursor: default; }
+.runBtnLoading:hover { background: #21262d; }
+
+.outputContent {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e6edf3;
+}
+
+.outputContent::-webkit-scrollbar { width: 4px; }
+.outputContent::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+.outputError { color: #f85149; }
+
+.outputLine {
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.placeholder {
+  color: #6e7681;
+  font-size: 12px;
+}
+
+.collapsedLabel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 10px;
+  color: #6e7681;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+}   
